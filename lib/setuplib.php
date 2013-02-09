@@ -356,7 +356,7 @@ function default_exception_handler($ex) {
     }
 
     if (is_early_init($info->backtrace)) {
-        echo bootstrap_renderer::early_error($info->message, $info->moreinfourl, $info->link, $info->backtrace, $info->debuginfo);
+        echo bootstrap_renderer::early_error($info->message, $info->moreinfourl, $info->link, $info->backtrace, $info->debuginfo, $info->errorcode);
     } else {
         try {
             if ($DB) {
@@ -370,7 +370,7 @@ function default_exception_handler($ex) {
             // so we just print at least something instead of "Exception thrown without a stack frame in Unknown on line 0":-(
             if (CLI_SCRIPT or AJAX_SCRIPT) {
                 // just ignore the error and send something back using the safest method
-                echo bootstrap_renderer::early_error($info->message, $info->moreinfourl, $info->link, $info->backtrace, $info->debuginfo);
+                echo bootstrap_renderer::early_error($info->message, $info->moreinfourl, $info->link, $info->backtrace, $info->debuginfo, $info->errorcode);
             } else {
                 echo bootstrap_renderer::early_error_content($info->message, $info->moreinfourl, $info->link, $info->backtrace, $info->debuginfo);
                 $outinfo = get_exception_info($out_ex);
@@ -713,8 +713,8 @@ function initialise_cfg() {
 
     try {
         if ($DB) {
-            $localcfg = $DB->get_records_menu('config', array(), '', 'name,value');
-            foreach ($localcfg as $name=>$value) {
+            $localcfg = get_config('core');
+            foreach ($localcfg as $name => $value) {
                 if (property_exists($CFG, $name)) {
                     // config.php settings always take precedence
                     continue;
@@ -760,6 +760,20 @@ function initialise_fullme() {
             // Explain the problem and redirect them to the right URL
             if (!defined('NO_MOODLE_COOKIES')) {
                 define('NO_MOODLE_COOKIES', true);
+            }
+            // The login/token.php script should call the correct url/port.
+            if (defined('REQUIRE_CORRECT_ACCESS') && REQUIRE_CORRECT_ACCESS) {
+                $wwwrootport = empty($wwwroot['port'])?'':$wwwroot['port'];
+                $calledurl = $rurl['host'];
+                if (!empty($rurl['port'])) {
+                    $calledurl .=  ':'. $rurl['port'];
+                }
+                $correcturl = $wwwroot['host'];
+                if (!empty($wwwrootport)) {
+                    $correcturl .=  ':'. $wwwrootport;
+                }
+                throw new moodle_exception('requirecorrectaccess', 'error', '', null,
+                    'You called ' . $calledurl .', you should have called ' . $correcturl);
             }
             redirect($CFG->wwwroot, get_string('wwwrootmismatch', 'error', $CFG->wwwroot), 3);
         }
@@ -1473,7 +1487,7 @@ width: 80%; -moz-border-radius: 20px; padding: 15px">
      * @param string $debuginfo extra information for developers
      * @return string
      */
-    public static function early_error($message, $moreinfourl, $link, $backtrace, $debuginfo = null) {
+    public static function early_error($message, $moreinfourl, $link, $backtrace, $debuginfo = null, $errorcode = null) {
         global $CFG;
 
         if (CLI_SCRIPT) {
@@ -1501,6 +1515,7 @@ width: 80%; -moz-border-radius: 20px; padding: 15px">
                     $e->stacktrace = format_backtrace($backtrace, true);
                 }
             }
+            $e->errorcode  = $errorcode;
             @header('Content-Type: application/json; charset=utf-8');
             echo json_encode($e);
             return;
@@ -1581,15 +1596,15 @@ width: 80%; -moz-border-radius: 20px; padding: 15px">
      * @param string $meta meta tag
      * @return string html page
      */
-    protected static function plain_page($title, $content, $meta = '') {
+    public static function plain_page($title, $content, $meta = '') {
         if (function_exists('get_string') && function_exists('get_html_lang')) {
             $htmllang = get_html_lang();
         } else {
             $htmllang = '';
         }
 
-        return '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml" ' . $htmllang . '>
+        return '<!DOCTYPE html>
+<html ' . $htmllang . '>
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 '.$meta.'

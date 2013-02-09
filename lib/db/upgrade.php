@@ -227,17 +227,10 @@ function xmldb_main_upgrade($oldversion) {
         upgrade_main_savepoint(true, 2012030100.01);
     }
 
-    if ($oldversion < 2012030100.02) {
-        // migrate all numbers to signed - it should be safe to interrupt this and continue later
-        upgrade_mysql_fix_unsigned_columns();
-
-        // Main savepoint reached
-        upgrade_main_savepoint(true, 2012030100.02);
-    }
-
     if ($oldversion < 2012030900.01) {
-        // migrate all texts and binaries to big size - it should be safe to interrupt this and continue later
-        upgrade_mysql_fix_lob_columns();
+        // Migrate all numbers to signed & all texts and binaries to big size.
+        // It should be safe to interrupt this and continue later.
+        upgrade_mysql_fix_unsigned_and_lob_columns();
 
         // Main savepoint reached
         upgrade_main_savepoint(true, 2012030900.01);
@@ -1500,6 +1493,77 @@ function xmldb_main_upgrade($oldversion) {
         // Main savepoint reached.
         upgrade_main_savepoint(true, 2012112100.00);
     }
+
+    // Moodle v2.4.0 release upgrade line
+    // Put any upgrade step following this
+
+
+    if ($oldversion < 2012120300.01) {
+        // Make sure site-course has format='site' //MDL-36840
+
+        if ($SITE->format !== 'site') {
+            $DB->set_field('course', 'format', 'site', array('id' => $SITE->id));
+            $SITE->format = 'site';
+        }
+
+        // Main savepoint reached
+        upgrade_main_savepoint(true, 2012120300.01);
+    }
+
+    if ($oldversion < 2012120300.04) {
+        // Remove "_utf8" suffix from all langs in course table.
+        $langs = $DB->get_records_sql("SELECT DISTINCT lang FROM {course} WHERE lang LIKE ?", array('%_utf8'));
+
+        foreach ($langs as $lang=>$unused) {
+            $newlang = str_replace('_utf8', '', $lang);
+            $sql = "UPDATE {course} SET lang = :newlang WHERE lang = :lang";
+            $DB->execute($sql, array('newlang'=>$newlang, 'lang'=>$lang));
+        }
+
+        // Main savepoint reached.
+        upgrade_main_savepoint(true, 2012120300.04);
+    }
+
+    if ($oldversion < 2012120300.07) {
+        // Purge removed module filters and all their settings.
+
+        $tables = array('filter_active', 'filter_config');
+        foreach ($tables as $table) {
+            $DB->delete_records_select($table, "filter LIKE 'mod/%'");
+            $filters = $DB->get_records_sql("SELECT DISTINCT filter FROM {{$table}} WHERE filter LIKE 'filter/%'");
+            foreach ($filters as $filter) {
+                $DB->set_field($table, 'filter', substr($filter->filter, 7), array('filter'=>$filter->filter));
+            }
+        }
+
+        $configs = array('stringfilters', 'filterall');
+        foreach ($configs as $config) {
+            if ($filters = get_config(null, $config)) {
+                $filters = explode(',', $filters);
+                $newfilters = array();
+                foreach($filters as $filter) {
+                    if (strpos($filter, '/') === false) {
+                        $newfilters[] = $filter;
+                    } else if (strpos($filter, 'filter/') === 0) {
+                        $newfilters[] = substr($filter, 7);
+                    }
+                }
+                $filters = implode(',', $newfilters);
+                set_config($config, $filters);
+            }
+        }
+
+        unset($tables);
+        unset($table);
+        unset($configs);
+        unset($newfilters);
+        unset($filters);
+        unset($filter);
+
+        // Main savepoint reached.
+        upgrade_main_savepoint(true, 2012120300.07);
+    }
+
 
     return true;
 }

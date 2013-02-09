@@ -560,10 +560,10 @@ class plugin_manager {
             ),
 
             'tool' => array(
-                'assignmentupgrade', 'capability', 'customlang', 'dbtransfer', 'generator',
-                'health', 'innodb', 'langimport', 'multilangupgrade', 'phpunit', 'profiling',
-                'qeupgradehelper', 'replace', 'spamcleaner', 'timezoneimport', 'unittest',
-                'uploaduser', 'unsuproles', 'xmldb'
+                'assignmentupgrade', 'behat', 'capability', 'customlang', 'dbtransfer',
+                'generator', 'health', 'innodb', 'langimport', 'multilangupgrade', 'phpunit',
+                'profiling', 'qeupgradehelper', 'replace', 'spamcleaner', 'timezoneimport',
+                'unittest', 'uploaduser', 'unsuproles', 'xmldb'
             ),
 
             'webservice' => array(
@@ -826,7 +826,11 @@ class available_update_checker {
         require_once($CFG->libdir.'/filelib.php');
 
         $curl = new curl(array('proxy' => true));
-        $response = $curl->post($this->prepare_request_url(), $this->prepare_request_params());
+        $response = $curl->post($this->prepare_request_url(), $this->prepare_request_params(), $this->prepare_request_options());
+        $curlerrno = $curl->get_errno();
+        if (!empty($curlerrno)) {
+            throw new available_update_checker_exception('err_response_curl', 'cURL error '.$curlerrno.': '.$curl->error);
+        }
         $curlinfo = $curl->get_info();
         if ($curlinfo['http_code'] != 200) {
             throw new available_update_checker_exception('err_response_http_code', $curlinfo['http_code']);
@@ -1070,6 +1074,29 @@ class available_update_checker {
     }
 
     /**
+     * Returns the list of cURL options to use when fetching available updates data
+     *
+     * @return array of (string)param => (string)value
+     */
+    protected function prepare_request_options() {
+        global $CFG;
+
+        $options = array(
+            'CURLOPT_SSL_VERIFYHOST' => 2,      // this is the default in {@link curl} class but just in case
+            'CURLOPT_SSL_VERIFYPEER' => true,
+        );
+
+        $cacertfile = $CFG->dataroot.'/moodleorgca.crt';
+        if (is_readable($cacertfile)) {
+            // Do not use CA certs provided by the operating system. Instead,
+            // use this CA cert to verify the updates provider.
+            $options['CURLOPT_CAINFO'] = $cacertfile;
+        }
+
+        return $options;
+    }
+
+    /**
      * Returns the current timestamp
      *
      * @return int the timestamp
@@ -1223,19 +1250,28 @@ class available_update_checker {
                 foreach ($componentupdates as $componentupdate) {
                     if ($componentupdate->version == $componentchange['version']) {
                         if ($component == 'core') {
-                            // in case of 'core' this is enough, we already know that the
-                            // $componentupdate is a real update with higher version
-                            $notifications[] = $componentupdate;
+                            // In case of 'core', we already know that the $componentupdate
+                            // is a real update with higher version ({@see self::get_update_info()}).
+                            // We just perform additional check for the release property as there
+                            // can be two Moodle releases having the same version (e.g. 2.4.0 and 2.5dev shortly
+                            // after the release). We can do that because we have the release info
+                            // always available for the core.
+                            if ((string)$componentupdate->release === (string)$componentchange['release']) {
+                                $notifications[] = $componentupdate;
+                            }
                         } else {
-                            // use the plugin_manager to check if the reported $componentchange
-                            // is a real update with higher version. such a real update must be
-                            // present in the 'availableupdates' property of one of the component's
-                            // available_update_info object
+                            // Use the plugin_manager to check if the detected $componentchange
+                            // is a real update with higher version. That is, the $componentchange
+                            // is present in the array of {@link available_update_info} objects
+                            // returned by the plugin's available_updates() method.
                             list($plugintype, $pluginname) = normalize_component($component);
-                            if (!empty($plugins[$plugintype][$pluginname]->availableupdates)) {
-                                foreach ($plugins[$plugintype][$pluginname]->availableupdates as $availableupdate) {
-                                    if ($availableupdate->version == $componentchange['version']) {
-                                        $notifications[] = $componentupdate;
+                            if (!empty($plugins[$plugintype][$pluginname])) {
+                                $availableupdates = $plugins[$plugintype][$pluginname]->available_updates();
+                                if (!empty($availableupdates)) {
+                                    foreach ($availableupdates as $availableupdate) {
+                                        if ($availableupdate->version == $componentchange['version']) {
+                                            $notifications[] = $componentupdate;
+                                        }
                                     }
                                 }
                             }
@@ -1562,6 +1598,10 @@ class available_update_deployer {
             $impediments['missingdownloadmd5'] = true;
         }
 
+        if (!empty($info->download) and !$this->update_downloadable($info->download)) {
+            $impediments['notdownloadable'] = true;
+        }
+
         if (!$this->component_writable($info->component)) {
             $impediments['notwritable'] = true;
         }
@@ -1659,6 +1699,28 @@ class available_update_deployer {
             'password' => $password,
             'returnurl' => $upgradeurl->out(true),
         );
+
+        if (!empty($CFG->proxyhost)) {
+            // MDL-36973 - Beware - we should call just !is_proxybypass() here. But currently, our
+            // cURL wrapper class does not do it. So, to have consistent behaviour, we pass proxy
+            // setting regardless the $CFG->proxybypass setting. Once the {@link curl} class is
+            // fixed, the condition should be amended.
+            if (true or !is_proxybypass($info->download)) {
+                if (empty($CFG->proxyport)) {
+                    $params['proxy'] = $CFG->proxyhost;
+                } else {
+                    $params['proxy'] = $CFG->proxyhost.':'.$CFG->proxyport;
+                }
+
+                if (!empty($CFG->proxyuser) and !empty($CFG->proxypassword)) {
+                    $params['proxyuserpwd'] = $CFG->proxyuser.':'.$CFG->proxypassword;
+                }
+
+                if (!empty($CFG->proxytype)) {
+                    $params['proxytype'] = $CFG->proxytype;
+                }
+            }
+        }
 
         $widget = new single_button(
             new moodle_url('/mdeploy.php', $params),
@@ -1888,6 +1950,40 @@ class available_update_deployer {
         }
 
         return $this->directory_writable($directory);
+    }
+
+    /**
+     * Checks if the mdeploy.php will be able to fetch the ZIP from the given URL
+     *
+     * This is mainly supposed to check if the transmission over HTTPS would
+     * work. That is, if the CA certificates are present at the server.
+     *
+     * @param string $downloadurl the URL of the ZIP package to download
+     * @return bool
+     */
+    protected function update_downloadable($downloadurl) {
+        global $CFG;
+
+        $curloptions = array(
+            'CURLOPT_SSL_VERIFYHOST' => 2,      // this is the default in {@link curl} class but just in case
+            'CURLOPT_SSL_VERIFYPEER' => true,
+        );
+
+        $cacertfile = $CFG->dataroot.'/moodleorgca.crt';
+        if (is_readable($cacertfile)) {
+            // Do not use CA certs provided by the operating system. Instead,
+            // use this CA cert to verify the updates provider.
+            $curloptions['CURLOPT_CAINFO'] = $cacertfile;
+        }
+
+        $curl = new curl(array('proxy' => true));
+        $result = $curl->head($downloadurl, $curloptions);
+        $errno = $curl->get_errno();
+        if (empty($errno)) {
+            return true;
+        } else {
+            return false;
+        }
     }
 
     /**
@@ -2555,15 +2651,15 @@ class plugininfo_filter extends plugininfo_base {
 
         $filters = array();
 
-        // get the list of filters from both /filter and /mod location
+        // get the list of filters in /filter location
         $installed = filter_get_all_installed();
 
-        foreach ($installed as $filterlegacyname => $displayname) {
+        foreach ($installed as $name => $displayname) {
             $plugin                 = new $typeclass();
             $plugin->type           = $type;
             $plugin->typerootdir    = $typerootdir;
-            $plugin->name           = self::normalize_legacy_name($filterlegacyname);
-            $plugin->rootdir        = $CFG->dirroot . '/' . $filterlegacyname;
+            $plugin->name           = $name;
+            $plugin->rootdir        = "$CFG->dirroot/filter/$name";
             $plugin->displayname    = $displayname;
 
             $plugin->load_disk_version();
@@ -2574,22 +2670,9 @@ class plugininfo_filter extends plugininfo_base {
             $filters[$plugin->name] = $plugin;
         }
 
-        $globalstates = self::get_global_states();
+        // Do not mess with filter registration here!
 
-        if ($DB->get_manager()->table_exists('filter_active')) {
-            // if we're upgrading from 1.9, the table does not exist yet
-            // if it does, make sure that all installed filters are registered
-            $needsreload  = false;
-            foreach (array_keys($installed) as $filterlegacyname) {
-                if (!isset($globalstates[self::normalize_legacy_name($filterlegacyname)])) {
-                    filter_set_global_state($filterlegacyname, TEXTFILTER_DISABLED);
-                    $needsreload = true;
-                }
-            }
-            if ($needsreload) {
-                $globalstates = self::get_global_states(true);
-            }
-        }
+        $globalstates = self::get_global_states();
 
         // make sure that all registered filters are installed, just in case
         foreach ($globalstates as $name => $info) {
@@ -2599,8 +2682,8 @@ class plugininfo_filter extends plugininfo_base {
                 $plugin->type           = $type;
                 $plugin->typerootdir    = $typerootdir;
                 $plugin->name           = $name;
-                $plugin->rootdir        = $CFG->dirroot . '/' . $info->legacyname;
-                $plugin->displayname    = $info->legacyname;
+                $plugin->rootdir        = "$CFG->dirroot/filter/$name";
+                $plugin->displayname    = $name;
 
                 $plugin->load_db_version();
 
@@ -2625,11 +2708,6 @@ class plugininfo_filter extends plugininfo_base {
      * @see load_version_php()
      */
     protected function load_version_php() {
-        if (strpos($this->name, 'mod_') === 0) {
-            // filters bundled with modules do not have a version.php and so
-            // do not provide their own versioning information.
-            return new stdClass();
-        }
         return parent::load_version_php();
     }
 
@@ -2637,8 +2715,7 @@ class plugininfo_filter extends plugininfo_base {
 
         $globalstates = self::get_global_states();
 
-        foreach ($globalstates as $filterlegacyname => $info) {
-            $name = self::normalize_legacy_name($filterlegacyname);
+        foreach ($globalstates as $name => $info) {
             if ($name === $this->name) {
                 if ($info->active == TEXTFILTER_DISABLED) {
                     return false;
@@ -2653,12 +2730,7 @@ class plugininfo_filter extends plugininfo_base {
     }
 
     public function get_settings_section_name() {
-        $globalstates = self::get_global_states();
-        if (!isset($globalstates[$this->name])) {
-            return parent::get_settings_section_name();
-        }
-        $legacyname = $globalstates[$this->name]->legacyname;
-        return 'filtersetting' . str_replace('/', '', $legacyname);
+        return 'filtersetting' . $this->name;
     }
 
     public function load_settings(part_of_admin_tree $adminroot, $parentnodename, $hassiteconfig) {
@@ -2666,9 +2738,8 @@ class plugininfo_filter extends plugininfo_base {
         $ADMIN = $adminroot; // may be used in settings.php
         $filter = $this; // also can be used inside settings.php
 
-        $globalstates = self::get_global_states();
         $settings = null;
-        if ($hassiteconfig && isset($globalstates[$this->name]) && file_exists($this->full_path('filtersettings.php'))) {
+        if ($hassiteconfig && file_exists($this->full_path('filtersettings.php'))) {
             $section = $this->get_settings_section_name();
             $settings = new admin_settingpage($section, $this->displayname,
                     'moodle/site:config', $this->is_enabled() === false);
@@ -2680,33 +2751,7 @@ class plugininfo_filter extends plugininfo_base {
     }
 
     public function get_uninstall_url() {
-
-        if (strpos($this->name, 'mod_') === 0) {
-            return null;
-        } else {
-            $globalstates = self::get_global_states();
-            $legacyname = $globalstates[$this->name]->legacyname;
-            return new moodle_url('/admin/filters.php', array('sesskey' => sesskey(), 'filterpath' => $legacyname, 'action' => 'delete'));
-        }
-    }
-
-    /**
-     * Convert legacy filter names like 'filter/foo' or 'mod/bar' into frankenstyle
-     *
-     * @param string $legacyfiltername legacy filter name
-     * @return string frankenstyle-like name
-     */
-    protected static function normalize_legacy_name($legacyfiltername) {
-
-        $name = str_replace('/', '_', $legacyfiltername);
-        if (strpos($name, 'filter_') === 0) {
-            $name = substr($name, 7);
-            if (empty($name)) {
-                throw new coding_exception('Unable to determine filter name: ' . $legacyfiltername);
-            }
-        }
-
-        return $name;
+        return new moodle_url('/admin/filters.php', array('sesskey' => sesskey(), 'filterpath' => $this->name, 'action' => 'delete'));
     }
 
     /**
@@ -2723,21 +2768,23 @@ class plugininfo_filter extends plugininfo_base {
         static $globalstatescache = null;
 
         if ($disablecache or is_null($globalstatescache)) {
+            $globalstatescache = array();
 
             if (!$DB->get_manager()->table_exists('filter_active')) {
-                // we're upgrading from 1.9 and the table used by {@link filter_get_global_states()}
-                // does not exist yet
-                $globalstatescache = array();
+                // Not installed yet.
+                return $globalstatescache;
+            }
 
-            } else {
-                foreach (filter_get_global_states() as $legacyname => $info) {
-                    $name                       = self::normalize_legacy_name($legacyname);
-                    $filterinfo                 = new stdClass();
-                    $filterinfo->legacyname     = $legacyname;
-                    $filterinfo->active         = $info->active;
-                    $filterinfo->sortorder      = $info->sortorder;
-                    $globalstatescache[$name]   = $filterinfo;
+            foreach (filter_get_global_states() as $name => $info) {
+                if (strpos($name, '/') !== false) {
+                    // Skip existing before upgrade to new names.
+                    continue;
                 }
+
+                $filterinfo                 = new stdClass();
+                $filterinfo->active         = $info->active;
+                $filterinfo->sortorder      = $info->sortorder;
+                $globalstatescache[$name]   = $filterinfo;
             }
         }
 
@@ -3016,21 +3063,28 @@ class plugininfo_enrol extends plugininfo_base {
     }
 
     public function get_settings_section_name() {
-        return 'enrolsettings' . $this->name;
+        if (file_exists($this->full_path('settings.php'))) {
+            return 'enrolsettings' . $this->name;
+        } else {
+            return null;
+        }
     }
 
     public function load_settings(part_of_admin_tree $adminroot, $parentnodename, $hassiteconfig) {
         global $CFG, $USER, $DB, $OUTPUT, $PAGE; // in case settings.php wants to refer to them
-        $ADMIN = $adminroot; // may be used in settings.php
-        $enrol = $this; // also can be used inside settings.php
+
+        if (!$hassiteconfig or !file_exists($this->full_path('settings.php'))) {
+            return;
+        }
         $section = $this->get_settings_section_name();
 
-        $settings = null;
-        if ($hassiteconfig && file_exists($this->full_path('settings.php'))) {
-            $settings = new admin_settingpage($section, $this->displayname,
-                    'moodle/site:config', $this->is_enabled() === false);
-            include($this->full_path('settings.php')); // this may also set $settings to null
-        }
+        $ADMIN = $adminroot; // may be used in settings.php
+        $enrol = $this; // also can be used inside settings.php
+        $settings = new admin_settingpage($section, $this->displayname,
+                'moodle/site:config', $this->is_enabled() === false);
+
+        include($this->full_path('settings.php')); // This may also set $settings to null!
+
         if ($settings) {
             $ADMIN->add($parentnodename, $settings);
         }

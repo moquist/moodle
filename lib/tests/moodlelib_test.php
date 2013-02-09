@@ -872,13 +872,52 @@ class moodlelib_testcase extends advanced_testcase {
     function test_clean_param_file() {
         $this->assertEquals(clean_param('correctfile.txt', PARAM_FILE), 'correctfile.txt');
         $this->assertEquals(clean_param('b\'a<d`\\/fi:l>e.t"x|t', PARAM_FILE), 'badfile.txt');
-        $this->assertEquals(clean_param('../parentdirfile.txt', PARAM_FILE), 'parentdirfile.txt');
+        $this->assertEquals(clean_param('../parentdirfile.txt', PARAM_FILE), '..parentdirfile.txt');
+        $this->assertEquals(clean_param('../../grandparentdirfile.txt', PARAM_FILE), '....grandparentdirfile.txt');
+        $this->assertEquals(clean_param('..\winparentdirfile.txt', PARAM_FILE), '..winparentdirfile.txt');
+        $this->assertEquals(clean_param('..\..\wingrandparentdir.txt', PARAM_FILE), '....wingrandparentdir.txt');
+        $this->assertEquals(clean_param('myfile.a.b.txt', PARAM_FILE), 'myfile.a.b.txt');
+        $this->assertEquals(clean_param('myfile..a..b.txt', PARAM_FILE), 'myfile..a..b.txt');
+        $this->assertEquals(clean_param('myfile.a..b...txt', PARAM_FILE), 'myfile.a..b...txt');
+        $this->assertEquals(clean_param('myfile.a.txt', PARAM_FILE), 'myfile.a.txt');
+        $this->assertEquals(clean_param('myfile...txt', PARAM_FILE), 'myfile...txt');
+        $this->assertEquals(clean_param('...jpg', PARAM_FILE), '...jpg');
+        $this->assertEquals(clean_param('.a.b.', PARAM_FILE), '.a.b.');
+        $this->assertEquals(clean_param('.', PARAM_FILE), '');
+        $this->assertEquals(clean_param('..', PARAM_FILE), '');
+        $this->assertEquals(clean_param('...', PARAM_FILE), '...');
+        $this->assertEquals(clean_param('. . . .', PARAM_FILE), '. . . .');
+        $this->assertEquals(clean_param('dontrtrim.me. .. .. . ', PARAM_FILE), 'dontrtrim.me. .. .. . ');
+        $this->assertEquals(clean_param(' . .dontltrim.me', PARAM_FILE), ' . .dontltrim.me');
+        $this->assertEquals(clean_param("here is a tab\t.txt", PARAM_FILE), 'here is a tab.txt');
+        $this->assertEquals(clean_param("here is a line\r\nbreak.txt", PARAM_FILE), 'here is a linebreak.txt');
+
         //The following behaviours have been maintained although they seem a little odd
         $this->assertEquals(clean_param('funny:thing', PARAM_FILE), 'funnything');
         $this->assertEquals(clean_param('./currentdirfile.txt', PARAM_FILE), '.currentdirfile.txt');
         $this->assertEquals(clean_param('c:\temp\windowsfile.txt', PARAM_FILE), 'ctempwindowsfile.txt');
         $this->assertEquals(clean_param('/home/user/linuxfile.txt', PARAM_FILE), 'homeuserlinuxfile.txt');
         $this->assertEquals(clean_param('~/myfile.txt', PARAM_FILE), '~myfile.txt');
+    }
+
+    function test_clean_param_path() {
+        $this->assertEquals(clean_param('correctfile.txt', PARAM_PATH), 'correctfile.txt');
+        $this->assertEquals(clean_param('b\'a<d`\\/fi:l>e.t"x|t', PARAM_PATH), 'bad/file.txt');
+        $this->assertEquals(clean_param('../parentdirfile.txt', PARAM_PATH), '/parentdirfile.txt');
+        $this->assertEquals(clean_param('../../grandparentdirfile.txt', PARAM_PATH), '/grandparentdirfile.txt');
+        $this->assertEquals(clean_param('..\winparentdirfile.txt', PARAM_PATH), '/winparentdirfile.txt');
+        $this->assertEquals(clean_param('..\..\wingrandparentdir.txt', PARAM_PATH), '/wingrandparentdir.txt');
+        $this->assertEquals(clean_param('funny:thing', PARAM_PATH), 'funnything');
+        $this->assertEquals(clean_param('./././here', PARAM_PATH), './here');
+        $this->assertEquals(clean_param('./currentdirfile.txt', PARAM_PATH), './currentdirfile.txt');
+        $this->assertEquals(clean_param('c:\temp\windowsfile.txt', PARAM_PATH), 'c/temp/windowsfile.txt');
+        $this->assertEquals(clean_param('/home/user/linuxfile.txt', PARAM_PATH), '/home/user/linuxfile.txt');
+        $this->assertEquals(clean_param('/home../user ./.linuxfile.txt', PARAM_PATH), '/home../user ./.linuxfile.txt');
+        $this->assertEquals(clean_param('~/myfile.txt', PARAM_PATH), '~/myfile.txt');
+        $this->assertEquals(clean_param('~/../myfile.txt', PARAM_PATH), '~/myfile.txt');
+        $this->assertEquals(clean_param('/..b../.../myfile.txt', PARAM_PATH), '/..b../.../myfile.txt');
+        $this->assertEquals(clean_param('..b../.../myfile.txt', PARAM_PATH), '..b../.../myfile.txt');
+        $this->assertEquals(clean_param('/super//slashes///', PARAM_PATH), '/super/slashes/');
     }
 
     function test_clean_param_username() {
@@ -943,9 +982,23 @@ class moodlelib_testcase extends advanced_testcase {
             '0'                              => '0',
             '0.0'                            => '0.0',
             '0.5'                            => '0.5',
+            '9.0'                            => '9.0',
+            '-9.0'                           => '-9.0',
+            '+9.0'                           => '+9.0',
+            '9.5'                            => '9.5',
+            '-9.5'                           => '-9.5',
+            '+9.5'                           => '+9.5',
+            '12.0'                           => '12.0',
+            '-12.0'                          => '-12.0',
+            '+12.0'                          => '+12.0',
+            '12.5'                           => '12.5',
             '-12.5'                          => '-12.5',
             '+12.5'                          => '+12.5',
+            '13.0'                           => '13.0',
+            '-13.0'                          => '-13.0',
+            '+13.0'                          => '+13.0',
             '13.5'                           => '',
+            '+13.5'                          => '',
             '-13.5'                          => '',
             '0.2'                            => '');
 
@@ -1355,46 +1408,46 @@ class moodlelib_testcase extends advanced_testcase {
         $longvalue = str_repeat('a', 1334);
         try {
             set_user_preference('_test_long_user_preference', $longvalue);
-            $this->assertFail('Exception expected - longer than 1333 chars not allowed as preference value');
-        } catch (Exception $e) {
-            $this->assertTrue($e instanceof coding_exception);
+            $this->fail('Exception expected - longer than 1333 chars not allowed as preference value');
+        } catch (coding_exception $ex) {
+            $this->assertTrue(true);
         }
 
         //test invalid params
         try {
             set_user_preference('_test_user_preferences_pref', array());
-            $this->assertFail('Exception expected - array not valid preference value');
-        } catch (Exception $ex) {
+            $this->fail('Exception expected - array not valid preference value');
+        } catch (coding_exception $ex) {
             $this->assertTrue(true);
         }
         try {
             set_user_preference('_test_user_preferences_pref', new stdClass);
-            $this->assertFail('Exception expected - class not valid preference value');
-        } catch (Exception $ex) {
+            $this->fail('Exception expected - class not valid preference value');
+        } catch (coding_exception $ex) {
             $this->assertTrue(true);
         }
         try {
-            set_user_preference('_test_user_preferences_pref', 1, array('xx'=>1));
-            $this->assertFail('Exception expected - user instance expected');
-        } catch (Exception $ex) {
+            set_user_preference('_test_user_preferences_pref', 1, array('xx' => 1));
+            $this->fail('Exception expected - user instance expected');
+        } catch (coding_exception $ex) {
             $this->assertTrue(true);
         }
         try {
             set_user_preference('_test_user_preferences_pref', 1, 'abc');
-            $this->assertFail('Exception expected - user instance expected');
-        } catch (Exception $ex) {
+            $this->fail('Exception expected - user instance expected');
+        } catch (coding_exception $ex) {
             $this->assertTrue(true);
         }
         try {
             set_user_preference('', 1);
-            $this->assertFail('Exception expected - invalid name accepted');
-        } catch (Exception $ex) {
+            $this->fail('Exception expected - invalid name accepted');
+        } catch (coding_exception $ex) {
             $this->assertTrue(true);
         }
         try {
             set_user_preference('1', 1);
-            $this->assertFail('Exception expected - invalid name accepted');
-        } catch (Exception $ex) {
+            $this->fail('Exception expected - invalid name accepted');
+        } catch (coding_exception $ex) {
             $this->assertTrue(true);
         }
 
@@ -2078,9 +2131,15 @@ class moodlelib_testcase extends advanced_testcase {
      * Test the function date_format_string().
      */
     function test_date_format_string() {
+        global $CFG;
+
         // Forcing locale and timezone.
         $oldlocale = setlocale(LC_TIME, '0');
-        setlocale(LC_TIME, 'en_AU.UTF-8');
+        if ($CFG->ostype == 'WINDOWS') {
+            setlocale(LC_TIME, 'English_Australia.1252');
+        } else {
+            setlocale(LC_TIME, 'en_AU.UTF-8');
+        }
         $systemdefaulttimezone = date_default_timezone_get();
         date_default_timezone_set('Australia/Perth');
 
@@ -2100,6 +2159,10 @@ class moodlelib_testcase extends advanced_testcase {
                 'str' => '%A, %d %B %Y, %I:%M %p',
                 'expected' => 'Saturday, 01 January 2011, 10:00 AM'
             ),
+            // Following tests pass on Windows only because en lang pack does
+            // not contain localewincharset, in real life lang pack maintainers
+            // may use only characters that are present in localewincharset
+            // in format strings!
             array(
                 'tz' => 99,
                 'str' => 'Žluťoučký koníček %A',
@@ -2129,5 +2192,57 @@ class moodlelib_testcase extends advanced_testcase {
         // Restore system default values.
         date_default_timezone_set($systemdefaulttimezone);
         setlocale(LC_TIME, $oldlocale);
+    }
+
+    public function test_get_config() {
+        global $CFG;
+
+        $this->resetAfterTest();
+
+        // Preparation.
+        set_config('phpunit_test_get_config_1', 'test 1');
+        set_config('phpunit_test_get_config_2', 'test 2', 'mod_forum');
+        if (!is_array($CFG->config_php_settings)) {
+            $CFG->config_php_settings = array();
+        }
+        $CFG->config_php_settings['phpunit_test_get_config_3'] = 'test 3';
+
+        if (!is_array($CFG->forced_plugin_settings)) {
+            $CFG->forced_plugin_settings = array();
+        }
+        if (!array_key_exists('mod_forum', $CFG->forced_plugin_settings)) {
+            $CFG->forced_plugin_settings['mod_forum'] = array();
+        }
+        $CFG->forced_plugin_settings['mod_forum']['phpunit_test_get_config_4'] = 'test 4';
+        $CFG->phpunit_test_get_config_5 = 'test 5';
+
+        // Testing.
+        $this->assertEquals('test 1', get_config('core', 'phpunit_test_get_config_1'));
+        $this->assertEquals('test 2', get_config('mod_forum', 'phpunit_test_get_config_2'));
+        $this->assertEquals('test 3', get_config('core', 'phpunit_test_get_config_3'));
+        $this->assertEquals('test 4', get_config('mod_forum', 'phpunit_test_get_config_4'));
+        $this->assertFalse(get_config('core', 'phpunit_test_get_config_5'));
+        $this->assertFalse(get_config('core', 'phpunit_test_get_config_x'));
+        $this->assertFalse(get_config('mod_forum', 'phpunit_test_get_config_x'));
+
+        // Test config we know to exist.
+        $this->assertEquals($CFG->dataroot, get_config('core', 'dataroot'));
+        $this->assertEquals($CFG->phpunit_dataroot, get_config('core', 'phpunit_dataroot'));
+        $this->assertEquals($CFG->dataroot, get_config('core', 'phpunit_dataroot'));
+        $this->assertEquals(get_config('core', 'dataroot'), get_config('core', 'phpunit_dataroot'));
+
+        // Test setting a config var that already exists.
+        set_config('phpunit_test_get_config_1', 'test a');
+        $this->assertEquals('test a', $CFG->phpunit_test_get_config_1);
+        $this->assertEquals('test a', get_config('core', 'phpunit_test_get_config_1'));
+
+        // Test cache invalidation.
+        $cache = cache::make('core', 'config');
+        $this->assertInternalType('array', $cache->get('core'));
+        $this->assertInternalType('array', $cache->get('mod_forum'));
+        set_config('phpunit_test_get_config_1', 'test b');
+        $this->assertFalse($cache->get('core'));
+        set_config('phpunit_test_get_config_4', 'test c', 'mod_forum');
+        $this->assertFalse($cache->get('mod_forum'));
     }
 }

@@ -393,10 +393,12 @@ class core_renderer extends renderer_base {
         }
 
         // Get the theme javascript head and footer
-        $jsurl = $this->page->theme->javascript_url(true);
-        $this->page->requires->js($jsurl, true);
-        $jsurl = $this->page->theme->javascript_url(false);
-        $this->page->requires->js($jsurl);
+        if ($jsurl = $this->page->theme->javascript_url(true)) {
+            $this->page->requires->js($jsurl, true);
+        }
+        if ($jsurl = $this->page->theme->javascript_url(false)) {
+            $this->page->requires->js($jsurl);
+        }
 
         // Get any HTML from the page_requirements_manager.
         $output .= $this->page->requires->get_head_code($this->page, $this);
@@ -425,6 +427,27 @@ class core_renderer extends renderer_base {
         $output = $this->page->requires->get_top_of_body_code();
         if (!empty($CFG->additionalhtmltopofbody)) {
             $output .= "\n".$CFG->additionalhtmltopofbody;
+        }
+        $output .= $this->maintenance_warning();
+        return $output;
+    }
+
+    /**
+     * Scheduled maintenance warning message.
+     *
+     * Note: This is a nasty hack to display maintenance notice, this should be moved
+     *       to some general notification area once we have it.
+     *
+     * @return string
+     */
+    public function maintenance_warning() {
+        global $CFG;
+
+        $output = '';
+        if (isset($CFG->maintenance_later) and $CFG->maintenance_later > time()) {
+            $output .= $this->box_start('errorbox maintenancewarning');
+            $output .= get_string('maintenancemodeisscheduled', 'admin', (int)(($CFG->maintenance_later-time())/60));
+            $output .= $this->box_end();
         }
         return $output;
     }
@@ -575,7 +598,8 @@ class core_renderer extends renderer_base {
                 }
                 $loggedinas = get_string('loggedinas', 'moodle', $username).$rolename;
                 if ($withlinks) {
-                    $loggedinas .= " (<a href=\"$CFG->wwwroot/course/view.php?id=$course->id&amp;switchrole=0&amp;sesskey=".sesskey()."\">".get_string('switchrolereturn').'</a>)';
+                    $url = new moodle_url('/course/switchrole.php', array('id'=>$course->id,'sesskey'=>sesskey(), 'switchrole'=>0, 'returnurl'=>$this->page->url->out_as_local_url(false)));
+                    $loggedinas .= '('.html_writer::tag('a', get_string('switchrolereturn'), array('href'=>$url)).')';
                 }
             } else {
                 $loggedinas = $realuserinfo.get_string('loggedinas', 'moodle', $username);
@@ -1565,9 +1589,15 @@ class core_renderer extends renderer_base {
             $output .= html_writer::label($select->label, $select->attributes['id'], false, $select->labelattributes);
         }
 
-        $select->attributes['class'] = 'autosubmit';
+        $classes = array();
+        if (!$select->showbutton) {
+            $classes[] = 'autosubmit';
+        }
         if ($select->class) {
-            $select->attributes['class'] .= ' ' . $select->class;
+            $classes[] = $select->class;
+        }
+        if (count($classes)) {
+            $select->attributes['class'] = implode(' ', $classes);
         }
 
         if ($select->helpicon instanceof help_icon) {
@@ -2097,7 +2127,7 @@ class core_renderer extends renderer_base {
         $attributes = array('src'=>$src, 'alt'=>$alt, 'title'=>$alt, 'class'=>$class, 'width'=>$size, 'height'=>$size);
 
         // get the image html output fisrt
-        $output = html_writer::empty_tag('img', $attributes);;
+        $output = html_writer::empty_tag('img', $attributes);
 
         // then wrap it in link if needed
         if (!$userpicture->link) {
@@ -2225,6 +2255,7 @@ EOD;
     <div id="file_info_{$client_id}" class="mdl-left filepicker-filelist" style="position: relative">
     <div class="filepicker-filename">
         <div class="filepicker-container">$currentfile<div class="dndupload-message">$strdndenabled <br/><div class="dndupload-arrow"></div></div></div>
+        <div class="dndupload-progressbars"></div>
     </div>
     <div><div class="dndupload-target">{$strdroptoupload}<br/><div class="dndupload-arrow"></div></div></div>
     </div>
@@ -2300,6 +2331,7 @@ EOD;
         if (empty($message)) {
             return '';
         }
+        $message = $this->pix_icon('i/warning', get_string('error'), '', array('class' => 'icon icon-pre', 'title'=>'')) . $message;
         return html_writer::tag('span', $message, array('class' => 'error'));
     }
 
