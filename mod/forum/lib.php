@@ -45,7 +45,7 @@ define('FORUM_TRACKING_OFF', 0);
 define('FORUM_TRACKING_OPTIONAL', 1);
 define('FORUM_TRACKING_ON', 2);
 
-define('FORUM_MAILED_NOTYET', 0);
+define('FORUM_MAILED_PENDING', 0);
 define('FORUM_MAILED_SUCCESS', 1);
 define('FORUM_MAILED_ERROR', 2);
 
@@ -2154,7 +2154,7 @@ function forum_get_unmailed_posts($starttime, $endtime, $now=null) {
     return $DB->get_records_sql("SELECT p.*, d.course, d.forum
                               FROM {forum_posts} p
                                    JOIN {forum_discussions} d ON d.id = p.discussion
-                             WHERE p.mailed = ".FORUM_MAILED_NOTYET."
+                             WHERE p.mailed = ".FORUM_MAILED_PENDING."
                                    AND p.created >= ?
                                    AND (p.created < ? OR p.mailnow = 1)
                                    $timedsql
@@ -2180,7 +2180,7 @@ function forum_mark_old_posts_as_mailed($endtime, $now=null) {
         return $DB->execute("UPDATE {forum_posts}
                                SET mailed = ".FORUM_MAILED_SUCCESS."
                              WHERE (created < ? OR mailnow = 1)
-                                   AND mailed = " . FORUM_MAILED_NOTYET, array($endtime));
+                                   AND mailed = " . FORUM_MAILED_PENDING, array($endtime));
 
     } else {
         return $DB->execute("UPDATE {forum_posts}
@@ -2189,7 +2189,7 @@ function forum_mark_old_posts_as_mailed($endtime, $now=null) {
                                                         FROM {forum_discussions} d
                                                        WHERE d.timestart > ?)
                                    AND (created < ? OR mailnow = 1)
-                                   AND mailed = " . FORUM_MAILED_NOTYET, array($now, $endtime));
+                                   AND mailed = " . FORUM_MAILED_PENDING, array($now, $endtime));
     }
 }
 
@@ -4316,7 +4316,7 @@ function forum_add_new_post($post, $mform, &$message) {
     $context    = context_module::instance($cm->id);
 
     $post->created    = $post->modified = time();
-    $post->mailed     = FORUM_MAILED_NOTYET;
+    $post->mailed     = FORUM_MAILED_PENDING;
     $post->userid     = $USER->id;
     $post->attachment = "";
 
@@ -4420,7 +4420,7 @@ function forum_add_discussion($discussion, $mform=null, $unused=null, $userid=nu
     $post->userid        = $userid;
     $post->created       = $timenow;
     $post->modified      = $timenow;
-    $post->mailed        = FORUM_MAILED_NOTYET;
+    $post->mailed        = FORUM_MAILED_PENDING;
     $post->subject       = $discussion->name;
     $post->message       = $discussion->message;
     $post->messageformat = $discussion->messageformat;
